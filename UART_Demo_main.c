@@ -21,11 +21,10 @@
 
 #include <stdio.h>         /* C standard IO */
 #include <string.h>
+#include <stdbool.h>
 
 // Program parameters
 #define INPUT_LENGTH 64        // Size of user input string.
-
-#define _XTAL_FREQ  4000000
 
 #pragma config LVP = OFF        // disable low voltage programming
 #pragma config FCMEN = OFF      // disable fail safe clock monitor
@@ -40,6 +39,9 @@ void interrupt ISR(void);
 void UART_init(void);
 void UART_write(unsigned char c);
 
+// global variables
+bool getchar_active = false;
+
 int main(void)
 {
     OSCCONbits.IRCF = 0b110; // Set internal RC oscillator to 4 MHz
@@ -47,25 +49,24 @@ int main(void)
 
     UART_init();  // initialize the UART module
 
+    INTCONbits.PEIE = 1; // enable peripheral interrupts
     INTCONbits.GIE = 1;  // enable interrupts
 
     printf("*** UART Demo System startup ***\n");
     
     while(1) {
-        char input_string[INPUT_LENGTH+2], reverse_string[INPUT_LENGTH];
+        char input_string[INPUT_LENGTH], reverse_string[INPUT_LENGTH];
         int string_length = 0;
-        char * ptr_input_string;
         memset(input_string,0,INPUT_LENGTH);
         memset(reverse_string,0,INPUT_LENGTH);
-        input_string[0] = INPUT_LENGTH;
         printf("Enter a string:\n");
-        ptr_input_string = cgets(input_string);
-        string_length = input_string[1];
-        printf("The entered string:\n");
-        printf("%s\n",ptr_input_string);
+        cgets(input_string);
+        string_length = strlen(input_string);
+        printf("\nThe entered string:\n");
+        printf("%s\n",input_string);
 
-        for (int c = string_length - 1, d = 0; c >= 2; c--, d++)
-            reverse_string[d] = input_string[c+2];
+        for (int c = string_length - 1, d = 0; c >= 0; c--, d++)
+            reverse_string[d] = input_string[c];
 
         printf("Reversed:\n");
         printf("%s\n",reverse_string);
@@ -88,27 +89,42 @@ void UART_init(void)
     return;
 }
 
-void UART_write(unsigned char c) {
-    while (!TXSTAbits.TRMT);
-    TXREG = c;
+unsigned char getch()
+{
+    getchar_active = true;
+    /* retrieve one byte */
+    while(getchar_active) /* set when register is not empty */
+        continue;
+    return RCREG;
+}
 
-    return;
+unsigned char getche(void)
+{
+    unsigned char c;
+    putch(c = getch());
+    return c;
 }
 
 // Override putch called by printf
 void putch(unsigned char byte)
 {
-    UART_write(byte);
-    if ('\n' == byte)
-        UART_write('\r');
+    while (!TXSTAbits.TRMT);
+    TXREG = byte;
+    if ('\n' == byte) {
+        while (!TXSTAbits.TRMT);
+        TXREG = '\r';
+    }
     return;
 }
 
 void interrupt ISR(void) {
 
     // AUSART Receive Interrupt Flag bit
-    if (1 == PIR1bits.RCIF)
-        UART_write(RCREG);
+    if (RCIE && RCIF)
+    {
+        getchar_active = false;
+        RCREG;      // Read RCREG to clear RCIF
+    }
 
     return;
 }
